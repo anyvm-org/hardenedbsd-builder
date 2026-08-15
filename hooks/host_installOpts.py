@@ -4,7 +4,7 @@
 # This runs against the REMIXED ISO that hooks/host_beforeBuild.py produced,
 # so the installer is on ttyu0 and everything below is plain serial I/O.
 #
-# Flow (each step verified locally against 15-stable under KVM):
+# Flow (each step verified locally against release 15 under KVM):
 #   1. "Console type [vt100]:" -> enter
 #   2. Welcome dialog -> 'L' selects Live System
 #   3. getty on ttyu0 -> log in as root (no password)
