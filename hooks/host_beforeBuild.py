@@ -46,13 +46,49 @@
 import re
 
 _osname = env("VM_OS_NAME")
+_rel = env("VM_RELEASE")
 _iso_out = wf("%s.iso" % _osname)
 
-if os.path.exists(_iso_out):
-    log("hardenedbsd beforeBuild: %s already present, skipping remix" % _iso_out)
+# EVERY cached path here is keyed by release. The output cannot be -- createVM
+# looks for exactly wf("<osname>.iso") -- so it gets a stamp file recording
+# which release it was remixed for.
+#
+# Without this the caches collide across releases in a shared WORKDIR. CI never
+# sees it (each job starts on a fresh runner), but a second local build does:
+# after building 15, the workdir still holds 15's upstream ISO and its extracted
+# tree, and a 14 build would skip the download, re-wrap 15's contents, and
+# install RELEASE 15 while reporting itself as 14. That failure is silent and
+# produces a plausible-looking green build, which is the worst kind.
+_iso_src = wf("%s-%s-upstream.iso" % (_osname, _rel))
+_tree = wf("isotree-%s" % _rel)
+_stamp = wf("%s.iso.release" % _osname)
+
+# The stamp carries a recipe tag as well as the release, so that changing WHAT
+# the remix puts on the ISO invalidates a cached one. Bump the tag whenever the
+# remix gains or loses content -- "sets1" is: serial console + the distribution
+# sets baked into /usr/freebsd-dist.
+_RECIPE = "sets1"
+_stamp_want = "%s %s" % (_rel, _RECIPE)
+
+_cached = None
+if os.path.exists(_stamp):
+    try:
+        _cached = open(_stamp).read().strip()
+    except OSError:
+        _cached = None
+_cached_rel = _cached
+
+if os.path.exists(_iso_out) and _cached == _stamp_want:
+    log("hardenedbsd beforeBuild: %s already remixed for release %s, skipping"
+        % (_iso_out, _rel))
 else:
-    _iso_src = wf("%s-upstream.iso" % _osname)
-    _tree = wf("isotree")
+    if os.path.exists(_iso_out):
+        log("hardenedbsd beforeBuild: %s was remixed for release %r, not %r "
+            "-- rebuilding it" % (_iso_out, _cached_rel, _rel))
+        try: os.remove(_iso_out)
+        except OSError: pass
+    try: os.remove(_stamp)
+    except OSError: pass
 
     if not os.path.exists(_iso_src):
         log("hardenedbsd beforeBuild: downloading %s" % env("VM_ISO_LINK"))
@@ -133,6 +169,58 @@ else:
                _efi_lba, _efi_sects // 4),
             "carve efiboot.img")
 
+    # --- bake the distribution sets into the ISO ----------------------------
+    # bootonly.iso ships /usr/freebsd-dist/MANIFEST but none of the sets, so
+    # bsdinstall would fetch them over the network. That path cost two long
+    # failures: bsdinstall's checksum step decided kernel.txz did not match and
+    # put up a modal error dialog with an [OK] button that nothing is driving,
+    # so the console froze and the build waited out its ceiling -- 30 min in CI,
+    # 40 min locally -- with no error visible anywhere. The host copies verified
+    # byte-exact against MANIFEST every time, so whatever went wrong was in the
+    # guest's fetch, and pre-fetching inside the guest is not an option either:
+    # the live system's /tmp is RAM-backed and cannot hold 628 MB.
+    #
+    # Putting the sets ON the ISO removes the whole failure surface. bsdinstall
+    # finds them in BSDINSTALL_DISTDIR (which for an ISO install IS
+    # /usr/freebsd-dist) and never fetches anything -- no HTTP, no resume, no
+    # checksum surprise, and no dependency on the host web server, which also
+    # means this builder no longer conflicts with another build over port 8000.
+    # It is what disc1.iso does; we are turning bootonly into its equivalent.
+    _distdir = os.path.join(_tree, "usr", "freebsd-dist")
+    os.makedirs(_distdir, exist_ok=True)
+    _dist_base = env("VM_ISO_LINK").rsplit("/", 1)[0]
+    for _fn in ("MANIFEST", "kernel.txz", "base.txz"):
+        _dst = os.path.join(_distdir, _fn)
+        if os.path.exists(_dst) and os.path.getsize(_dst) > 0:
+            log("hardenedbsd beforeBuild: %s already in the ISO tree (%d bytes)"
+                % (_fn, os.path.getsize(_dst)))
+            continue
+        log("hardenedbsd beforeBuild: adding %s to the ISO tree" % _fn)
+        download("%s/%s" % (_dist_base, _fn), _dst)
+
+    # Verify them HERE, while a mismatch can still name itself. Inside the
+    # guest the same mismatch is a dialog nobody can dismiss.
+    import hashlib as _hashlib
+    _want = {}
+    with open(os.path.join(_distdir, "MANIFEST")) as _mf:
+        for _line in _mf:
+            _p = _line.split()
+            if len(_p) >= 2:
+                _want[_p[0]] = _p[1]
+    for _fn in ("kernel.txz", "base.txz"):
+        _dst = os.path.join(_distdir, _fn)
+        _hh = _hashlib.sha256()
+        with open(_dst, "rb") as _fh:
+            for _chunk in iter(lambda: _fh.read(1024 * 1024), b""):
+                _hh.update(_chunk)
+        if _hh.hexdigest() != _want.get(_fn):
+            log("FATAL: %s does not match MANIFEST before it even reaches the "
+                "ISO.\n  expected %s\n  actual   %s"
+                % (_fn, _want.get(_fn), _hh.hexdigest()))
+            sys.exit(1)
+        log("hardenedbsd beforeBuild: %s verified (%s)"
+            % (_fn, _hh.hexdigest()[:16]))
+
     # --- give the loader a serial console (idempotent) ----------------------
     _lc = os.path.join(_tree, "boot", "loader.conf")
     _marker = "# anyvm hardenedbsd-builder: serial console"
@@ -182,5 +270,10 @@ else:
             "report:\n%s" % _rep2)
         sys.exit(1)
     log("hardenedbsd beforeBuild: El Torito entries present: %s" % ", ".join(_imgs))
-    log("hardenedbsd beforeBuild: remixed ISO ready (%d bytes), El Torito intact"
-        % os.path.getsize(_iso_out))
+
+    # Stamp LAST, only once the ISO has passed its checks -- an interrupted
+    # remix must not leave a stamp claiming the output is good.
+    with open(_stamp, "w") as _sf:
+        _sf.write(_stamp_want + "\n")
+    log("hardenedbsd beforeBuild: remixed ISO ready (%d bytes) for release %s, "
+        "El Torito intact" % (os.path.getsize(_iso_out), _rel))

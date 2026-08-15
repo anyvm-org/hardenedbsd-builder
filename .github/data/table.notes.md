@@ -2,6 +2,14 @@
 amd64 only: HardenedBSD builds no other architecture, and it publishes
 installer ISOs rather than VM images, so this builder takes the ISO path.
 
+Release `14` lists fewer sync methods on purpose. HardenedBSD has retired the
+binary package repository for 14-STABLE -- it still publishes installers, but
+`pkg.hardenedbsd.org/HardenedBSD/pkg/FreeBSD:14:amd64/` returns 404 while the
+`:15:` and `:16:` repositories answer, so the guest cannot even bootstrap
+`pkg`. That image ships the base system only: `scp` works because it is in
+base, `nfs` and `tar` need nothing installed in the guest, and `rsync` and
+`sshfs` are unavailable. Release 15 keeps the full set.
+
 Release `15` is HardenedBSD's 15-STABLE branch and `14` is 14-STABLE. Each
 one follows that branch's rolling `LATEST` installer -- upstream publishes
 `build-N` directories and moves `LATEST` to the newest -- so an image is a

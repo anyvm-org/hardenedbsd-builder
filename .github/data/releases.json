@@ -5,7 +5,7 @@
       "tag": "14",
       "release": "14",
       "arch": "x86_64",
-      "sync": "rsync,scp,sshfs,nfs,tar",
+      "sync": "nfs,scp,tar",
       "shutdown": "/sbin/shutdown -p now",
       "desktop": false,
       "build": true
