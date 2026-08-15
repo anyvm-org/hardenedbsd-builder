@@ -1,0 +1,23 @@
+{
+  "os": "hardenedbsd",
+  "releases": [
+    {
+      "tag": "14-stable",
+      "release": "14-stable",
+      "arch": "x86_64",
+      "sync": "rsync,scp,sshfs,nfs,tar",
+      "shutdown": "/sbin/shutdown -p now",
+      "desktop": false,
+      "build": true
+    },
+    {
+      "tag": "15-stable",
+      "release": "15-stable",
+      "arch": "x86_64",
+      "sync": "rsync,scp,sshfs,nfs,tar",
+      "shutdown": "/sbin/shutdown -p now",
+      "desktop": false,
+      "build": true
+    }
+  ]
+}
