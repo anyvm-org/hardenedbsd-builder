@@ -139,6 +139,15 @@ echo 'console="comconsole"' >> /boot/loader.conf
 echo 'comconsole_speed="115200"' >> /boot/loader.conf
 echo 'boot_serial="YES"' >> /boot/loader.conf
 
+# fusefs must be loaded BY THE LOADER, not at runtime: HardenedBSD's kernel
+# hardening rejects kldload after boot ("[HBSD INTERNAL] Insecure kernel
+# module load attempt rejected: /boot/kernel/fusefs.ko"), so anyvm's usual
+# kldload-before-sshfs prelude is denied and every sshfs mount fails with
+# "fuse: failed to open fuse device" (anyvm run 32681102095). Loader-stage
+# module loading happens before the hardening applies, so this line is the
+# only way the image can offer sshfs at all.
+echo 'fusefs_load="YES"' >> /boot/loader.conf
+
 echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
 echo 'PermitEmptyPasswords yes' >> /etc/ssh/sshd_config
 echo 'AcceptEnv *' >> /etc/ssh/sshd_config
